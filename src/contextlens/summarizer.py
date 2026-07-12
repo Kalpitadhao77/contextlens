@@ -30,7 +30,14 @@ class Summarizer:
     def count_tokens(self, text: str) -> int:
         return len(self.encoding.encode(text))
 
-    def summarize(self, text: str, target_tokens: int, instruction: Optional[str] = None, api_key: Optional[str] = None) -> str:
+    def summarize(
+        self,
+        text: str,
+        target_tokens: int,
+        instruction: Optional[str] = None,
+        api_key: Optional[str] = None,
+        previous_context: Optional[str] = None
+    ) -> str:
         """
         Uses LiteLLM to summarize the text based on the user's custom instruction.
         Falls back to truncation if no API key is available.
@@ -40,6 +47,7 @@ class Summarizer:
             target_tokens: How many tokens the output should roughly be.
             instruction: Optional natural language instruction from the user.
             api_key: Optional API key extracted from proxy headers for zero-config.
+            previous_context: Optional context of the preceding messages to resolve cross-references.
         """
         if not text.strip():
             return ""
@@ -51,10 +59,15 @@ class Summarizer:
             "focus on, and aggressively compress or drop what they don't."
         ) if instruction else ""
 
+        context_directive = (
+            f"\n\nFor context, here is what was discussed immediately prior to this message:\n{previous_context}"
+        ) if previous_context else ""
+
         prompt = (
             f"You are a context compaction engine. Compress the following text to "
             f"roughly {target_tokens} tokens while retaining maximum meaning and technical detail."
             f"{focus_directive}"
+            f"{context_directive}"
             f"\n\nText to compact:\n{text}"
         )
 

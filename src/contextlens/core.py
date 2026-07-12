@@ -65,6 +65,8 @@ class ContextLens:
 
         # Calculate per-message token budget proportionally
         compacted: List[Dict[str, Any]] = []
+        recent_history: List[str] = []
+
         for i, msg in enumerate(normalized):
             content = msg.get("content", "")
             msg_tokens = self.summarizer.count_tokens(content)
@@ -72,19 +74,31 @@ class ContextLens:
             proportion = msg_tokens / total_tokens
             msg_budget = max(50, int(proportion * target_tokens))
 
+            role_prefix = f"[{msg.get('role', 'unknown').upper()}]"
+
             if msg_tokens <= msg_budget:
                 compacted.append(msg)
+                recent_history.append(f"{role_prefix}: {content}")
+                if len(recent_history) > 3:
+                    recent_history.pop(0)
                 continue
+
+            previous_context = "\n".join(recent_history) if recent_history else None
 
             compressed_content = self.summarizer.summarize(
                 text=content,
                 target_tokens=msg_budget,
                 instruction=instruction,
                 api_key=api_key,
+                previous_context=previous_context
             )
 
             new_msg = dict(msg)
             new_msg["content"] = compressed_content
             compacted.append(new_msg)
+
+            recent_history.append(f"{role_prefix}: {compressed_content}")
+            if len(recent_history) > 3:
+                recent_history.pop(0)
 
         return compacted
