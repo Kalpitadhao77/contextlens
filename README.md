@@ -74,7 +74,9 @@ export OPENAI_BASE_URL=http://localhost:8000
 | Feature | Description |
 |---|---|
 | 📝 **Instruction-Driven** | Write plain English in `CONTEXTLENS.md` to control what gets preserved vs. dropped |
-| 🔌 **Transparent Proxy** | Sits between your agent and the API — zero code changes required |
+| 🪟 **Sliding Window Context** | Preserves conversational thread by referencing previous messages during compaction, preventing pronoun hallucination |
+| 🔌 **Transparent Proxy** | Sits between your agent and the API — zero config and zero code changes required |
+| 🔑 **Zero-Config API Keys** | Automatically extracts the API key your agent is already using — no extra setup |
 | 🧠 **LiteLLM Powered** | Use any model for compaction: OpenAI, Anthropic, or free local Ollama models |
 | 🛡️ **MCP Server** | Also ships as an MCP tool for Claude Code and Cursor |
 | ⚡ **Smart Thresholds** | Only compacts when context actually exceeds a configurable token limit |
