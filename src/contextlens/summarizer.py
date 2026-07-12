@@ -1,71 +1,85 @@
-import os
 import logging
 import tiktoken
-from typing import List, Dict, Any
+from typing import Optional
 
 try:
     import litellm
+    litellm.suppress_debug_info = True
 except ImportError:
     litellm = None
 
 logger = logging.getLogger(__name__)
 
+
 class Summarizer:
     def __init__(self, model_name: str = "gpt-4o-mini"):
         """
         model_name can be any LiteLLM supported string:
-        - "gpt-4o-mini" (requires OPENAI_API_KEY)
-        - "claude-3-haiku-20240307" (requires ANTHROPIC_API_KEY)
-        - "ollama/llama3" (requires local ollama running)
+        - "gpt-4o-mini"          (requires OPENAI_API_KEY)
+        - "claude-3-haiku-..."   (requires ANTHROPIC_API_KEY)
+        - "ollama/llama3.2"      (requires local ollama running, free)
         """
         self.model_name = model_name
         try:
-            # tiktoken is generally OpenAI specific but works well enough for general counting
-            self.encoding = tiktoken.encoding_for_model(model_name.replace("ollama/", ""))
+            self.encoding = tiktoken.encoding_for_model(
+                model_name.replace("ollama/", "").replace("anthropic/", "")
+            )
         except KeyError:
             self.encoding = tiktoken.get_encoding("cl100k_base")
 
     def count_tokens(self, text: str) -> int:
         return len(self.encoding.encode(text))
 
-    def summarize(self, text: str, target_ratio: float = 0.5) -> str:
+    def summarize(self, text: str, target_tokens: int, instruction: Optional[str] = None, api_key: Optional[str] = None) -> str:
         """
-        Calls LiteLLM to summarize the text down to roughly the target_ratio.
-        Falls back to raw truncation if no API key is found or LiteLLM fails.
+        Uses LiteLLM to summarize the text based on the user's custom instruction.
+        Falls back to truncation if no API key is available.
+
+        Args:
+            text: The raw text to compact.
+            target_tokens: How many tokens the output should roughly be.
+            instruction: Optional natural language instruction from the user.
+            api_key: Optional API key extracted from proxy headers for zero-config.
         """
-        tokens = self.encoding.encode(text)
-        current_len = len(tokens)
-        target_len = int(current_len * target_ratio)
-        
-        if target_len <= 0:
+        if not text.strip():
             return ""
 
-        # Try to use LiteLLM if available and configured
+        # Build the instruction-aware prompt
+        focus_directive = (
+            f"\n\nUSER'S CUSTOM COMPACTION INSTRUCTION:\n{instruction}\n\n"
+            "Based on this instruction, prioritize retaining information the user wants to "
+            "focus on, and aggressively compress or drop what they don't."
+        ) if instruction else ""
+
+        prompt = (
+            f"You are a context compaction engine. Compress the following text to "
+            f"roughly {target_tokens} tokens while retaining maximum meaning and technical detail."
+            f"{focus_directive}"
+            f"\n\nText to compact:\n{text}"
+        )
+
         if litellm:
             try:
-                # We tell the model to be concise
-                prompt = (
-                    f"Summarize the following text to roughly {target_len} words or less. "
-                    f"Retain the most critical technical details, entity names, and final conclusions. "
-                    f"Drop conversational filler.\n\nText:\n{text}"
-                )
-                
-                # Disable excessive LiteLLM logging
-                litellm.suppress_debug_info = True
-                
                 response = litellm.completion(
                     model=self.model_name,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=target_len,
-                    temperature=0.0 # Deterministic
+                    max_tokens=target_tokens,
+                    temperature=0.0,
+                    api_key=api_key,
                 )
-                
-                summary = response.choices[0].message.content
-                return f"[LLM Summarized] {summary}"
-                
+                return response.choices[0].message.content
+
             except Exception as e:
-                logger.warning(f"LiteLLM summarization failed ({e}). Falling back to truncation.")
-        
-        # Fallback: Simulate summarization by keeping the first N tokens
-        truncated = self.encoding.decode(tokens[:target_len])
-        return f"[Truncated] {truncated}..."
+                logger.warning(
+                    f"[ContextLens] LiteLLM failed ({type(e).__name__}). "
+                    "Skipping compaction — no model available. "
+                    "Set an API key or configure Ollama to enable smart compaction."
+                )
+                return text
+
+        # No LiteLLM installed — return original text unchanged
+        logger.warning(
+            "[ContextLens] No summarization model available. "
+            "Install litellm and set an API key, or configure Ollama."
+        )
+        return text

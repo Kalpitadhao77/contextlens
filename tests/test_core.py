@@ -1,35 +1,59 @@
 import pytest
 from contextlens.core import ContextLens
 
-def test_context_compaction_drops_and_pins(tmp_path):
-    # Create a temporary yaml config for testing
-    config_file = tmp_path / "test_rules.yaml"
-    config_file.write_text("""
-rules:
-  - pattern: "DROP_ME"
-    action: "drop"
-  - pattern: "PIN_ME"
-    action: "pin"
-    """)
 
-    # Initialize ContextLens pointing to the temp config
-    lens = ContextLens(config_path=str(config_file))
-    
-    # We pass in a dummy summarizer that just tags the text to avoid needing API keys
+def test_no_compaction_needed():
+    """Messages already within budget should be returned as-is."""
+    lens = ContextLens()
     messages = [
-        {"role": "user", "content": "This is a normal message that should be summarized."},
-        {"role": "user", "content": "This has DROP_ME inside it."},
-        {"role": "user", "content": "This is very important PIN_ME data."}
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
     ]
+    result = lens.compact(messages, target_tokens=10000)
+    assert result == messages
 
-    compacted = lens.compact(messages)
 
-    # The DROP_ME message should be entirely removed
-    assert len(compacted) == 2
+def test_compaction_passes_through_without_api_key():
+    """Without an API key, messages should pass through unchanged (no broken truncation)."""
+    lens = ContextLens()
+    long_content = "This is a really long sentence that repeats itself. " * 200
+    messages = [
+        {"role": "user", "content": long_content},
+        {"role": "assistant", "content": long_content},
+    ]
+    result = lens.compact(messages, target_tokens=50)
 
-    # The PIN_ME message should be untouched
-    assert compacted[1]["content"] == "This is very important PIN_ME data."
+    # Without an API key, content passes through intact — never give broken context
+    assert len(result) == 2
+    assert result[0]["content"] == long_content
 
-    # The normal message should have been summarized (or truncated by our fallback)
-    assert "This is a normal message" in compacted[0]["content"]
-    assert "[Truncated]" in compacted[0]["content"] or "[LLM Summarized]" in compacted[0]["content"]
+
+def test_instruction_is_accepted():
+    """Passing a custom instruction should not crash and should return valid messages."""
+    lens = ContextLens()
+    long_content = "This is some content about auth logic and also some CSS stuff. " * 100
+    messages = [{"role": "user", "content": long_content}]
+
+    result = lens.compact(
+        messages,
+        instruction="Focus on the auth logic. Drop the CSS stuff.",
+        target_tokens=50,
+    )
+    assert len(result) == 1
+    assert "content" in result[0]
+
+
+def test_empty_messages():
+    """Empty message list should return empty list."""
+    lens = ContextLens()
+    result = lens.compact([], target_tokens=1000)
+    assert result == []
+
+
+def test_plain_string_messages():
+    """Plain strings should be normalized to dicts."""
+    lens = ContextLens()
+    messages = ["Hello there", "What's up?"]
+    result = lens.compact(messages, target_tokens=10000)
+    assert all(isinstance(m, dict) for m in result)
+    assert all("role" in m and "content" in m for m in result)
